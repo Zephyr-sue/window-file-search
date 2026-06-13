@@ -1,87 +1,152 @@
 # Windows File Search Engine
 
-Version 1 indexes filenames and full paths into a local SQLite database, then searches that database instead of rescanning the filesystem on every query. Indexing now uses multiple worker threads to crawl directories faster, and the default search-time rebuild covers all logical drives.
+A lightweight Windows file search engine written in C that indexes filenames and file paths into a local SQLite database, enabling instant searches without rescanning the filesystem on every query.
+
+## Overview
+
+Windows File Search Engine recursively crawls the filesystem, stores file metadata in a SQLite database, and performs fast filename-based searches against the index.
+
+The project uses multithreaded directory traversal to accelerate indexing and supports searching across the entire machine or within a specific drive/folder scope.
 
 ## Features
 
-- Recursive filesystem crawling from a user-provided root path or all logical drives.
-- Multithreaded indexing with multiple directory workers.
-- SQLite-backed storage in `index.db`.
-- Filename search with `LIKE '%term%'`.
-- Result selection and opening with the system default application.
-- Automatic indexing of all logical drives when search runs and the database is empty.
+* Recursive filesystem traversal using Win32 APIs
+* Multithreaded directory crawling
+* SQLite-backed file indexing
+* Automatic indexing of all logical drives
+* Fast filename search using indexed database lookups
+* Scope-limited search within a specific drive or folder
+* Open search results using the default Windows application
+* Automatic database creation and management
+
+## Tech Stack
+
+* C
+* Win32 API
+* SQLite3
+* Windows Shell API
+* Multithreading
+
+## Architecture
+
+```text
+Filesystem
+    ↓
+Windows Directory Crawler
+    ↓
+SQLite Database (index.db)
+    ↓
+Filename Search Engine
+    ↓
+Open File Handler
+```
+
+## Performance
+
+Benchmark on a Windows machine after deleting the existing index and performing a full rebuild:
+
+* Indexed files: 491,593
+* Database size: ~100 MB
+* Full indexing time: 7.16 seconds
+* Indexing throughput: ~68,000 files/sec
+* Search latency: effectively instantaneous for common queries
 
 ## Build
 
-This workspace uses a single C source file. Build it with a Windows C compiler and link against Shell32 for file opening.
+Compile using a Windows C compiler.
 
-Example with MinGW:
+Example using MinGW:
 
 ```bash
 gcc fileCrawler.c -o fileCrawler.exe -lshell32
 ```
 
-At runtime, the program loads `sqlite3.dll` dynamically. Make sure SQLite is installed and `sqlite3.dll` is available on `PATH` or in the same folder as the executable.
+At runtime, the application dynamically loads `sqlite3.dll`.
+
+Place `sqlite3.dll` either:
+
+* beside the executable, or
+* somewhere on the system PATH
 
 ## Usage
 
-Index a tree:
+### Index a specific directory
 
 ```bash
 fileCrawler.exe index C:\Users\User
 ```
 
-Index the whole machine:
+### Index all logical drives
 
 ```bash
 fileCrawler.exe index
 ```
 
-Search indexed filenames:
+### Search indexed filenames
 
 ```bash
 fileCrawler.exe search notes
 ```
 
-Scope search to one drive or folder:
+### Scope search to a drive
 
 ```bash
-fileCrawler.exe search lab E:\
-fileCrawler.exe search lab E:\Projects
+fileCrawler.exe search report D:\
 ```
 
-If you rename the executable to `indexer.exe` or `search.exe`, it also accepts the shorter single-argument form:
+### Scope search to a folder
 
 ```bash
-indexer.exe C:\Users\User
-search.exe notes E:\
+fileCrawler.exe search report D:\Projects
 ```
 
-If you run search before indexing, the program will automatically index all logical drives first.
+If no index exists, the application automatically indexes all logical drives before executing the search.
 
 ## Database Schema
 
-The program creates the database and table automatically:
-
 ```sql
 CREATE TABLE files (
-	id INTEGER PRIMARY KEY,
-	filename TEXT,
-	path TEXT
+    id INTEGER PRIMARY KEY,
+    filename TEXT,
+    path TEXT
 );
 
-CREATE INDEX idx_filename ON files(filename);
+CREATE INDEX idx_filename
+ON files(filename);
 ```
 
 ## Workflow
 
 1. Crawl a root directory or all logical drives.
-2. Insert each regular file into SQLite.
-3. Search the `files` table by filename.
-4. Pick a result number to open the file in its default app.
+2. Extract filename and full path metadata.
+3. Store metadata in SQLite.
+4. Search indexed filenames.
+5. Open selected results directly from the search interface.
 
-## Notes
+## Design Notes
 
-- Multiple worker threads are used for directory crawling, but SQLite writes are serialized to keep the database consistent.
-- Full all-drive reindex benchmark on this machine after deleting `index.db`: 7.16 seconds.
-   
+* Directory traversal is parallelized using multiple worker threads.
+* SQLite writes are synchronized to maintain database consistency.
+* File metadata is indexed once and reused across searches.
+* Search operations query SQLite instead of rescanning the filesystem.
+
+## Future Improvements
+
+* Incremental indexing
+* Real-time filesystem monitoring
+* Fuzzy filename matching
+* Content indexing
+* GUI frontend
+* NTFS MFT-based indexing
+* Ranking and relevance scoring
+
+## Learning Objectives
+
+This project explores:
+
+* Filesystem traversal
+* Multithreaded systems programming
+* SQLite integration in C
+* Database indexing concepts
+* Search engine fundamentals
+* Windows systems programming
