@@ -10,7 +10,6 @@
 #include <string.h>
 #include <stdint.h>
 
-#define DB_FILE "index.db"
 #define PATH_BUFFER_SIZE 4096
 #define MAX_INDEX_WORKERS 8
 
@@ -162,6 +161,43 @@ static int get_basename(const char *path, char *buffer, size_t buffer_size) {
     return 1;
 }
 
+static int join_path(char *destination, size_t destination_size, const char *parent, const char *child);
+
+static int get_app_data_directory(char *buffer, size_t buffer_size) {
+    DWORD written;
+    char local_app_data[PATH_BUFFER_SIZE];
+
+    written = GetEnvironmentVariableA("LOCALAPPDATA", local_app_data, (DWORD)sizeof(local_app_data));
+    if (written == 0 || written >= buffer_size) {
+        return 0;
+    }
+
+    local_app_data[written] = '\0';
+
+    if (!join_path(buffer, buffer_size, local_app_data, "WindowFileSearch")) {
+        return 0;
+    }
+
+    if (CreateDirectoryA(buffer, NULL) == 0) {
+        DWORD error = GetLastError();
+        if (error != ERROR_ALREADY_EXISTS) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static int get_database_path(char *buffer, size_t buffer_size) {
+    char data_directory[PATH_BUFFER_SIZE];
+
+    if (!get_app_data_directory(data_directory, sizeof(data_directory))) {
+        return 0;
+    }
+
+    return join_path(buffer, buffer_size, data_directory, "index.db");
+}
+
 static int execute_sql(sqlite3 *db, const char *sql) {
     char *error_message = NULL;
     int rc = sqlite3_exec(db, sql, NULL, NULL, &error_message);
@@ -177,13 +213,19 @@ static int execute_sql(sqlite3 *db, const char *sql) {
 
 static sqlite3 *open_database(void) {
     sqlite3 *db = NULL;
+    char database_path[PATH_BUFFER_SIZE];
 
     if (!load_sqlite_api()) {
         return NULL;
     }
 
-    if (sqlite3_open(DB_FILE, &db) != SQLITE_OK) {
-        fprintf(stderr, "Failed to open %s: %s\n", DB_FILE, db != NULL ? sqlite3_errmsg(db) : "unknown error");
+    if (!get_database_path(database_path, sizeof(database_path))) {
+        fprintf(stderr, "Failed to resolve database path.\n");
+        return NULL;
+    }
+
+    if (sqlite3_open(database_path, &db) != SQLITE_OK) {
+        fprintf(stderr, "Failed to open %s: %s\n", database_path, db != NULL ? sqlite3_errmsg(db) : "unknown error");
         if (db != NULL) {
             sqlite3_close(db);
         }
@@ -495,7 +537,7 @@ static size_t determine_worker_count(void) {
     return worker_count;
 }
 
-static int run_indexing(int all_drives, const char *root_path) {
+static int run_indexing(int all_drives, int root_count, const char **roots) {
     sqlite3 *db = open_database();
     sqlite3_stmt *insert_statement = NULL;
     IndexContext context;
@@ -505,12 +547,6 @@ static int run_indexing(int all_drives, const char *root_path) {
     int success = 1;
 
     if (db == NULL) {
-        return 1;
-    }
-
-    if (!all_drives && !path_is_directory(root_path)) {
-        fprintf(stderr, "Root path is not an accessible directory: %s\n", root_path);
-        sqlite3_close(db);
         return 1;
     }
 
@@ -556,11 +592,24 @@ static int run_indexing(int all_drives, const char *root_path) {
             success = 0;
         }
     } else {
-        if (!queue_push(context.queue, root_path)) {
-            fprintf(stderr, "Failed to queue root directory: %s\n", root_path);
-            context.failed = 1;
-            queue_abort(context.queue);
-            success = 0;
+        for (size_t root_index = 0; root_index < (size_t)root_count; ++root_index) {
+            const char *root_path = roots[root_index];
+
+            if (!path_is_directory(root_path)) {
+                fprintf(stderr, "Root path is not an accessible directory: %s\n", root_path);
+                context.failed = 1;
+                queue_abort(context.queue);
+                success = 0;
+                break;
+            }
+
+            if (!queue_push(context.queue, root_path)) {
+                fprintf(stderr, "Failed to queue root directory: %s\n", root_path);
+                context.failed = 1;
+                queue_abort(context.queue);
+                success = 0;
+                break;
+            }
         }
     }
 
@@ -615,18 +664,29 @@ static int run_indexing(int all_drives, const char *root_path) {
     if (all_drives) {
         printf("Indexed %ld files across all logical drives using %zu worker threads\n", context.file_count, worker_count);
     } else {
-        printf("Indexed %ld files into %s using %zu worker threads\n", context.file_count, DB_FILE, worker_count);
+        printf("Indexed %ld files into the user database using %zu worker threads\n", context.file_count, worker_count);
     }
 
     return 0;
 }
 
 static int index_directory(const char *root_path) {
-    return run_indexing(0, root_path);
+    const char *roots[] = { root_path };
+    return run_indexing(0, 1, roots);
+}
+
+static int index_all_drives(void);
+
+static int index_multiple_roots(int root_count, const char **roots) {
+    if (root_count <= 0 || roots == NULL) {
+        return index_all_drives();
+    }
+
+    return run_indexing(0, root_count, roots);
 }
 
 static int index_all_drives(void) {
-    return run_indexing(1, NULL);
+    return run_indexing(1, 0, NULL);
 }
 
 static int open_file_with_default_app(const char *path) {
@@ -844,7 +904,11 @@ int main(int argc, char *argv[]) {
             return index_all_drives();
         }
 
-        return index_directory(argv[2]);
+        if (argc == 3) {
+            return index_directory(argv[2]);
+        }
+
+        return index_multiple_roots(argc - 2, (const char **)&argv[2]);
     }
 
     if (_stricmp(argv[1], "search") == 0) {

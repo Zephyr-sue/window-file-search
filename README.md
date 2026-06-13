@@ -2,6 +2,8 @@
 
 A lightweight Windows file search engine written in C that indexes filenames and file paths into a local SQLite database, enabling instant searches without rescanning the filesystem on every query.
 
+For the end-user guide, see [README-USER.md](README-USER.md).
+
 ## Overview
 
 Windows File Search Engine recursively crawls the filesystem, stores file metadata in a SQLite database, and performs fast filename-based searches against the index.
@@ -41,9 +43,11 @@ Filename Search Engine
 Open File Handler
 ```
 
+The database is stored per user at `%LOCALAPPDATA%\WindowFileSearch\index.db`.
+
 ## Performance
 
-Benchmark on a Windows machine after deleting the existing index and performing a full rebuild:
+Benchmark on a Windows machine after deleting the existing per-user index and performing a full rebuild:
 
 * Indexed files: 491,593
 * Database size: ~100 MB
@@ -129,6 +133,7 @@ ON files(filename);
 * SQLite writes are synchronized to maintain database consistency.
 * File metadata is indexed once and reused across searches.
 * Search operations query SQLite instead of rescanning the filesystem.
+* The user-facing launcher lives in [windowFileSearchLauncher.c](windowFileSearchLauncher.c).
 
 ## Future Improvements
 
@@ -136,7 +141,7 @@ ON files(filename);
 * Real-time filesystem monitoring
 * Fuzzy filename matching
 * Content indexing
-* GUI frontend
+* Launcher polish
 * NTFS MFT-based indexing
 * Ranking and relevance scoring
 
