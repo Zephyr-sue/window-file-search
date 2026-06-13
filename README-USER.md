@@ -36,12 +36,15 @@ When you close the launcher window, it stays running in the system tray instead 
 
 1. Press `Ctrl+Alt+F`.
 2. Type a filename search term.
-3. Press **Search**.
-4. Double-click a result to open it.
+3. (Optional) Type a drive or folder path in **Scope (optional)** to limit the search to that area.
+4. Press **Search**.
+5. Double-click a result to open it.
 
 You can also right-click the tray icon and choose **Show** to bring the window back.
 
 Search results are ranked to favor exact filename matches, common user folders like Downloads/Desktop/Documents, and file extensions such as `.pdf`, `.doc`, `.jpg`, `.mp3`, and `.c`. Results from `Windows` and `Program Files` are pushed down.
+
+If `Ctrl+Alt+F` does not open the window, make sure `windowFileSearchLauncher.exe` is still running in the tray. The hotkey only works while the launcher process is active.
 
 ## Updating the Index
 
@@ -65,7 +68,7 @@ If you are building from source:
 
 ```bash
 gcc fileCrawler.c -o fileCrawler.exe -lshell32 -lole32
-gcc windowFileSearchLauncher.c -o windowFileSearchLauncher.exe -lshell32 -lcomctl32 -lole32
+gcc windowFileSearchLauncher.c -o windowFileSearchLauncher.exe -mwindows -lshell32 -lcomctl32 -lole32 -luuid
 ```
 
 ## Suggested Startup Setup

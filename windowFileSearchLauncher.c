@@ -3,8 +3,10 @@
 
 #include <windows.h>
 #include <objbase.h>
+#include <objidl.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <process.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -473,6 +475,72 @@ static int browse_for_folder(HWND owner, char *buffer, size_t buffer_size) {
     return buffer[0] != '\0';
 }
 
+static int ensure_startup_shortcut(void) {
+    char startup_dir[PATH_BUFFER_SIZE];
+    char launcher_path[PATH_BUFFER_SIZE];
+    char shortcut_path[PATH_BUFFER_SIZE];
+    WCHAR shortcut_wide[PATH_BUFFER_SIZE];
+    IShellLinkA *shell_link = NULL;
+    IPersistFile *persist_file = NULL;
+    HRESULT hr;
+
+    if (!get_local_appdata(startup_dir, sizeof(startup_dir))) {
+        return 0;
+    }
+
+    if (!join_path(startup_dir, sizeof(startup_dir), startup_dir, "Microsoft\\Windows\\Start Menu\\Programs\\Startup")) {
+        return 0;
+    }
+
+    if (CreateDirectoryA(startup_dir, NULL) == 0) {
+        DWORD error = GetLastError();
+        if (error != ERROR_ALREADY_EXISTS) {
+            return 0;
+        }
+    }
+
+    if (!GetModuleFileNameA(NULL, launcher_path, (DWORD)sizeof(launcher_path))) {
+        return 0;
+    }
+
+    if (!join_path(shortcut_path, sizeof(shortcut_path), startup_dir, "WindowFileSearch.lnk")) {
+        return 0;
+    }
+
+    if (GetFileAttributesA(shortcut_path) != INVALID_FILE_ATTRIBUTES) {
+        return 1;
+    }
+
+    hr = CoInitialize(NULL);
+    if (FAILED(hr) && hr != S_FALSE) {
+        return 0;
+    }
+
+    hr = CoCreateInstance(&CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, &IID_IShellLinkA, (void **)&shell_link);
+    if (FAILED(hr) || shell_link == NULL) {
+        CoUninitialize();
+        return 0;
+    }
+
+    if (MultiByteToWideChar(CP_UTF8, 0, shortcut_path, -1, shortcut_wide, (int)sizeof(shortcut_wide) / sizeof(shortcut_wide[0])) > 0 &&
+        SUCCEEDED(shell_link->lpVtbl->SetPath(shell_link, launcher_path)) &&
+        SUCCEEDED(shell_link->lpVtbl->SetWorkingDirectory(shell_link, startup_dir)) &&
+        SUCCEEDED(shell_link->lpVtbl->QueryInterface(shell_link, &IID_IPersistFile, (void **)&persist_file)) &&
+        SUCCEEDED(persist_file->lpVtbl->Save(persist_file, shortcut_wide, TRUE))) {
+        CoUninitialize();
+        return 1;
+    }
+
+    if (persist_file != NULL) {
+        persist_file->lpVtbl->Release(persist_file);
+    }
+    if (shell_link != NULL) {
+        shell_link->lpVtbl->Release(shell_link);
+    }
+    CoUninitialize();
+    return 0;
+}
+
 static int get_file_crawler_path(char *buffer, size_t buffer_size) {
     char module_path[PATH_BUFFER_SIZE];
     char *last_slash;
@@ -873,9 +941,12 @@ static LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM w_param,
         create_controls(window);
         populate_available_drives(g_available_list);
         load_roots(g_roots_list);
-        RegisterHotKey(window, HOTKEY_ID, MOD_CONTROL | MOD_ALT, 'F');
+        if (!RegisterHotKey(window, HOTKEY_ID, MOD_CONTROL | MOD_ALT, 'F')) {
+            set_status(window, "Ctrl+Alt+F could not be registered. Another app may already use it.");
+        } else {
+            set_status(window, "Ctrl+Alt+F opens the search box. Use the Scope box to limit results.");
+        }
         add_tray_icon();
-        set_status(window, "Ctrl+Alt+F opens the search box.");
         return 0;
     case WM_SIZE:
         resize_controls(window, LOWORD(l_param), HIWORD(l_param));
@@ -951,6 +1022,7 @@ int WINAPI WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR command_li
     (void)command_line;
 
     g_instance = instance;
+    ensure_startup_shortcut();
     ZeroMemory(&wc, sizeof(wc));
     wc.lpfnWndProc = main_wnd_proc;
     wc.hInstance = instance;
