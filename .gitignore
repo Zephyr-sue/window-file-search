@@ -1,0 +1,16 @@
+# Per-user search index and SQLite runtime files
+index.db
+index.db-*
+*.db-wal
+*.db-shm
+*.db-journal
+
+# Local benchmark output
+benchmark-results/
+*.benchmark.txt
+
+# Compiler output and debug files
+*.o
+*.obj
+*.pdb
+*.ilk

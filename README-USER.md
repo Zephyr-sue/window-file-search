@@ -23,9 +23,9 @@ The launcher uses the SQLite database stored per user under:
 ## First Run
 
 1. Start `windowFileSearchLauncher.exe`.
-2. Select the drives you want to index.
-3. Use **Add Drive** or **Add Folder** to add folders.
-4. Press **Index Selected**.
+2. Select a drive in **Available drives**.
+3. Use **Add drive** or **Add folder...** to put locations in the searchable list.
+4. Press **Build / refresh index**.
 5. Wait for indexing to finish.
 
 After that, your selections are saved in your user profile and you can search right away.
@@ -36,13 +36,16 @@ When you close the launcher window, it stays running in the system tray instead 
 
 1. Press `Ctrl+Alt+F`.
 2. Type a filename search term.
-3. (Optional) Type a drive or folder path in **Scope (optional)** to limit the search to that area.
+3. (Optional) Use **Browse...** beside the scope box to limit the search to one folder.
 4. Press **Search**.
 5. Double-click a result to open it.
 
 You can also right-click the tray icon and choose **Show** to bring the window back.
 
-Search results are ranked to favor exact filename matches, common user folders like Downloads/Desktop/Documents, and file extensions such as `.pdf`, `.doc`, `.jpg`, `.mp3`, and `.c`. Results from `Windows` and `Program Files` are pushed down.
+Search results show a relevance label such as `[Exact name]`, `[Same base name]`,
+or `[Starts with]`. Exact and strong filename matches appear first. Common user
+folders receive a small boost, while generated and system-heavy folders such as
+`.git`, `node_modules`, `Windows`, and `Program Files` are pushed down.
 
 If `Ctrl+Alt+F` does not open the window, make sure `windowFileSearchLauncher.exe` is still running in the tray. The hotkey only works while the launcher process is active.
 

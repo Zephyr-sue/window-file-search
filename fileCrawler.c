@@ -662,9 +662,9 @@ static int run_indexing(int all_drives, int root_count, const char **roots) {
     sqlite3_close(db);
 
     if (all_drives) {
-        printf("Indexed %ld files across all logical drives using %zu worker threads\n", context.file_count, worker_count);
+        printf("Indexed %ld files across all logical drives using %lu worker threads\n", context.file_count, (unsigned long)worker_count);
     } else {
-        printf("Indexed %ld files into the user database using %zu worker threads\n", context.file_count, worker_count);
+        printf("Indexed %ld files into the user database using %lu worker threads\n", context.file_count, (unsigned long)worker_count);
     }
 
     return 0;
@@ -735,6 +735,7 @@ static int search_files(const char *term, const char *scope) {
     size_t result_capacity = 0;
     char search_pattern[PATH_BUFFER_SIZE];
     char scope_pattern[PATH_BUFFER_SIZE];
+    char extension_term[PATH_BUFFER_SIZE];
     char selection_buffer[64];
     long selection;
 
@@ -762,29 +763,64 @@ static int search_files(const char *term, const char *scope) {
     }
 
     build_scope_pattern(scope, scope_pattern, sizeof(scope_pattern));
+    snprintf(extension_term, sizeof(extension_term), "%s", term[0] == '.' ? term + 1 : term);
 
     if (scope_pattern[0] != '\0') {
-        if (sqlite3_prepare_v2(db, "SELECT filename, path FROM files WHERE filename LIKE ? AND path LIKE ? ORDER BY filename COLLATE NOCASE, path COLLATE NOCASE;", -1, &search_statement, NULL) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(db,
+            "SELECT filename, path, ("
+            " CASE WHEN lower(filename) = lower(?1) THEN 2000 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE lower(?1) || '.%' THEN 1200 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE lower(?1) || '%' THEN 700 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '% ' || lower(?1) || '%' OR lower(filename) LIKE '%_' || lower(?1) || '%' OR lower(filename) LIKE '%-' || lower(?1) || '%' THEN 450 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%' || lower(?2) || '.%' THEN 350 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%.' || lower(?2) THEN 300 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\downloads\\%' THEN 90 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\desktop\\%' THEN 80 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\documents\\%' THEN 75 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\pictures\\%' OR lower(path) LIKE '%\\music\\%' THEN 55 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\.git\\%' OR lower(path) LIKE '%\\node_modules\\%' THEN -250 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\program files\\%' OR lower(path) LIKE '%\\windows\\%' THEN -350 ELSE 0 END"
+            ") AS score FROM files WHERE lower(filename) LIKE lower(?3) AND lower(path) LIKE lower(?4)"
+            " ORDER BY score DESC, length(filename) ASC, length(path) ASC, filename COLLATE NOCASE LIMIT 200;",
+            -1, &search_statement, NULL) != SQLITE_OK) {
             fprintf(stderr, "Failed to prepare search statement: %s\n", sqlite3_errmsg(db));
             sqlite3_close(db);
             return 1;
         }
     } else {
-        if (sqlite3_prepare_v2(db, "SELECT filename, path FROM files WHERE filename LIKE ? ORDER BY filename COLLATE NOCASE;", -1, &search_statement, NULL) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(db,
+            "SELECT filename, path, ("
+            " CASE WHEN lower(filename) = lower(?1) THEN 2000 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE lower(?1) || '.%' THEN 1200 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE lower(?1) || '%' THEN 700 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '% ' || lower(?1) || '%' OR lower(filename) LIKE '%_' || lower(?1) || '%' OR lower(filename) LIKE '%-' || lower(?1) || '%' THEN 450 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%' || lower(?2) || '.%' THEN 350 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%.' || lower(?2) THEN 300 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\downloads\\%' THEN 90 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\desktop\\%' THEN 80 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\documents\\%' THEN 75 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\pictures\\%' OR lower(path) LIKE '%\\music\\%' THEN 55 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\.git\\%' OR lower(path) LIKE '%\\node_modules\\%' THEN -250 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\program files\\%' OR lower(path) LIKE '%\\windows\\%' THEN -350 ELSE 0 END"
+            ") AS score FROM files WHERE lower(filename) LIKE lower(?3)"
+            " ORDER BY score DESC, length(filename) ASC, length(path) ASC, filename COLLATE NOCASE LIMIT 200;",
+            -1, &search_statement, NULL) != SQLITE_OK) {
             fprintf(stderr, "Failed to prepare search statement: %s\n", sqlite3_errmsg(db));
             sqlite3_close(db);
             return 1;
         }
     }
 
-    if (sqlite3_bind_text(search_statement, 1, search_pattern, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+    if (sqlite3_bind_text(search_statement, 1, term, -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+        sqlite3_bind_text(search_statement, 2, extension_term, -1, SQLITE_TRANSIENT) != SQLITE_OK ||
+        sqlite3_bind_text(search_statement, 3, search_pattern, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
         fprintf(stderr, "Failed to bind search term: %s\n", sqlite3_errmsg(db));
         sqlite3_finalize(search_statement);
         sqlite3_close(db);
         return 1;
     }
 
-    if (scope_pattern[0] != '\0' && sqlite3_bind_text(search_statement, 2, scope_pattern, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
+    if (scope_pattern[0] != '\0' && sqlite3_bind_text(search_statement, 4, scope_pattern, -1, SQLITE_TRANSIENT) != SQLITE_OK) {
         fprintf(stderr, "Failed to bind scope: %s\n", sqlite3_errmsg(db));
         sqlite3_finalize(search_statement);
         sqlite3_close(db);
@@ -838,7 +874,7 @@ static int search_files(const char *term, const char *scope) {
     }
 
     for (size_t index = 0; index < result_count; ++index) {
-        printf("%zu. %s\n   %s\n", index + 1, results[index].filename, results[index].path);
+        printf("%lu. %s\n   %s\n", (unsigned long)(index + 1), results[index].filename, results[index].path);
     }
 
     printf("Select a result number to open (0 to exit): ");

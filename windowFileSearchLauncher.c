@@ -33,6 +33,15 @@
 #define IDC_STATUS 110
 #define IDC_SCOPE_EDIT 111
 #define IDC_SCOPE_BUTTON 112
+#define IDC_TITLE 113
+#define IDC_SUBTITLE 114
+#define IDC_INDEX_GROUP 115
+#define IDC_AVAILABLE_LABEL 116
+#define IDC_ROOTS_LABEL 117
+#define IDC_SEARCH_GROUP 118
+#define IDC_SEARCH_LABEL 119
+#define IDC_SCOPE_LABEL 120
+#define IDC_RESULTS_LABEL 121
 
 #define SQLITE_OK 0
 #define SQLITE_ROW 100
@@ -51,6 +60,7 @@ typedef int (__cdecl *sqlite3_bind_text_fn)(sqlite3_stmt *, int, const char *, i
 typedef int (__cdecl *sqlite3_step_fn)(sqlite3_stmt *);
 typedef int (__cdecl *sqlite3_finalize_fn)(sqlite3_stmt *);
 typedef const unsigned char *(__cdecl *sqlite3_column_text_fn)(sqlite3_stmt *, int);
+typedef int (__cdecl *sqlite3_column_int_fn)(sqlite3_stmt *, int);
 typedef const char *(__cdecl *sqlite3_errmsg_fn)(sqlite3 *);
 typedef void (__cdecl *sqlite3_free_fn)(void *);
 
@@ -77,6 +87,7 @@ static sqlite3_bind_text_fn p_sqlite3_bind_text;
 static sqlite3_step_fn p_sqlite3_step;
 static sqlite3_finalize_fn p_sqlite3_finalize;
 static sqlite3_column_text_fn p_sqlite3_column_text;
+static sqlite3_column_int_fn p_sqlite3_column_int;
 static sqlite3_errmsg_fn p_sqlite3_errmsg;
 static sqlite3_free_fn p_sqlite3_free;
 static SearchResult *g_results;
@@ -90,6 +101,7 @@ static int sqlite3_bind_text(sqlite3_stmt *statement, int index, const char *tex
 static int sqlite3_step(sqlite3_stmt *statement) { return p_sqlite3_step(statement); }
 static int sqlite3_finalize(sqlite3_stmt *statement) { return p_sqlite3_finalize(statement); }
 static const unsigned char *sqlite3_column_text(sqlite3_stmt *statement, int column) { return p_sqlite3_column_text(statement, column); }
+static int sqlite3_column_int(sqlite3_stmt *statement, int column) { return p_sqlite3_column_int(statement, column); }
 static const char *sqlite3_errmsg(sqlite3 *db) { return p_sqlite3_errmsg(db); }
 static void sqlite3_free(void *pointer) { p_sqlite3_free(pointer); }
 
@@ -316,6 +328,7 @@ static int load_sqlite(void) {
     LOAD_PROC(sqlite3_step);
     LOAD_PROC(sqlite3_finalize);
     LOAD_PROC(sqlite3_column_text);
+    LOAD_PROC(sqlite3_column_int);
     LOAD_PROC(sqlite3_errmsg);
     LOAD_PROC(sqlite3_free);
 
@@ -703,19 +716,21 @@ static int search_database(const char *term, const char *scope) {
     if (scope_pattern[0] != '\0') {
         if (sqlite3_prepare_v2(db,
             "SELECT filename, path, ("
-            " CASE WHEN lower(filename) = ?1 THEN 1200 ELSE 0 END"
-            " + CASE WHEN lower(filename) LIKE ?2 || '%' THEN 180 ELSE 0 END"
-            " + CASE WHEN lower(filename) LIKE '%' || ?3 || '.%' THEN 220 ELSE 0 END"
-            " + CASE WHEN lower(filename) LIKE '%.' || ?4 THEN 140 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\downloads\\%' THEN 110 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\desktop\\%' THEN 90 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\documents\\%' THEN 85 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\pictures\\%' THEN 70 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\music\\%' THEN 65 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\program files\\%' OR lower(path) LIKE '%\\windows\\%' THEN -400 ELSE 0 END"
+            " CASE WHEN lower(filename) = ?1 THEN 2000 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE ?1 || '.%' THEN 1200 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE ?2 || '%' THEN 700 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '% ' || ?1 || '%' OR lower(filename) LIKE '%_' || ?1 || '%' OR lower(filename) LIKE '%-' || ?1 || '%' THEN 450 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%' || ?3 || '.%' THEN 350 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%.' || ?4 THEN 300 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\downloads\\%' THEN 90 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\desktop\\%' THEN 80 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\documents\\%' THEN 75 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\pictures\\%' OR lower(path) LIKE '%\\music\\%' THEN 55 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\.git\\%' OR lower(path) LIKE '%\\node_modules\\%' THEN -250 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\program files\\%' OR lower(path) LIKE '%\\windows\\%' THEN -350 ELSE 0 END"
             ") AS score"
             " FROM files WHERE lower(filename) LIKE ?5 AND lower(path) LIKE ?6"
-            " ORDER BY score DESC, length(path) ASC, filename COLLATE NOCASE LIMIT 200;",
+            " ORDER BY score DESC, length(filename) ASC, length(path) ASC, filename COLLATE NOCASE LIMIT 200;",
             -1, &statement, NULL) != SQLITE_OK) {
             sqlite3_close(db);
             set_status(g_main_window, "Failed to prepare search query.");
@@ -736,19 +751,21 @@ static int search_database(const char *term, const char *scope) {
     } else {
         if (sqlite3_prepare_v2(db,
             "SELECT filename, path, ("
-            " CASE WHEN lower(filename) = ?1 THEN 1200 ELSE 0 END"
-            " + CASE WHEN lower(filename) LIKE ?2 || '%' THEN 180 ELSE 0 END"
-            " + CASE WHEN lower(filename) LIKE '%' || ?3 || '.%' THEN 220 ELSE 0 END"
-            " + CASE WHEN lower(filename) LIKE '%.' || ?4 THEN 140 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\downloads\\%' THEN 110 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\desktop\\%' THEN 90 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\documents\\%' THEN 85 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\pictures\\%' THEN 70 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\music\\%' THEN 65 ELSE 0 END"
-            " + CASE WHEN lower(path) LIKE '%\\program files\\%' OR lower(path) LIKE '%\\windows\\%' THEN -400 ELSE 0 END"
+            " CASE WHEN lower(filename) = ?1 THEN 2000 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE ?1 || '.%' THEN 1200 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE ?2 || '%' THEN 700 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '% ' || ?1 || '%' OR lower(filename) LIKE '%_' || ?1 || '%' OR lower(filename) LIKE '%-' || ?1 || '%' THEN 450 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%' || ?3 || '.%' THEN 350 ELSE 0 END"
+            " + CASE WHEN lower(filename) LIKE '%.' || ?4 THEN 300 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\downloads\\%' THEN 90 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\desktop\\%' THEN 80 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\documents\\%' THEN 75 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\pictures\\%' OR lower(path) LIKE '%\\music\\%' THEN 55 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\.git\\%' OR lower(path) LIKE '%\\node_modules\\%' THEN -250 ELSE 0 END"
+            " + CASE WHEN lower(path) LIKE '%\\program files\\%' OR lower(path) LIKE '%\\windows\\%' THEN -350 ELSE 0 END"
             ") AS score"
             " FROM files WHERE lower(filename) LIKE ?5"
-            " ORDER BY score DESC, length(path) ASC, filename COLLATE NOCASE LIMIT 200;",
+            " ORDER BY score DESC, length(filename) ASC, length(path) ASC, filename COLLATE NOCASE LIMIT 200;",
             -1, &statement, NULL) != SQLITE_OK) {
             sqlite3_close(db);
             set_status(g_main_window, "Failed to prepare search query.");
@@ -770,8 +787,22 @@ static int search_database(const char *term, const char *scope) {
     while ((rc = sqlite3_step(statement)) == SQLITE_ROW) {
         const unsigned char *filename_text = sqlite3_column_text(statement, 0);
         const unsigned char *path_text = sqlite3_column_text(statement, 1);
+        int score = sqlite3_column_int(statement, 2);
+        const char *relevance;
         SearchResult *new_results;
         char display[MAX_LIST_TEXT];
+
+        if (score >= 1800) {
+            relevance = "Exact name";
+        } else if (score >= 1100) {
+            relevance = "Same base name";
+        } else if (score >= 650) {
+            relevance = "Starts with";
+        } else if (score >= 300) {
+            relevance = "Strong match";
+        } else {
+            relevance = "Name contains";
+        }
 
         new_results = (SearchResult *)realloc(g_results, (g_result_count + 1) * sizeof(*g_results));
         if (new_results == NULL) {
@@ -794,8 +825,8 @@ static int search_database(const char *term, const char *scope) {
             return 0;
         }
 
-        snprintf(display, sizeof(display), "%s", (const char *)filename_text);
-        strncat(display, " | ", sizeof(display) - strlen(display) - 1);
+        snprintf(display, sizeof(display), "[%s] %s", relevance, (const char *)filename_text);
+        strncat(display, "  -  ", sizeof(display) - strlen(display) - 1);
         strncat(display, (const char *)path_text, sizeof(display) - strlen(display) - 1);
         g_results[g_result_count].display = duplicate_string(display);
         if (g_results[g_result_count].display == NULL) {
@@ -818,7 +849,7 @@ static int search_database(const char *term, const char *scope) {
         set_status(g_main_window, "No matches.");
     } else {
         char status[128];
-        snprintf(status, sizeof(status), "Found %zu result(s).", g_result_count);
+        snprintf(status, sizeof(status), "Found %lu result(s).", (unsigned long)g_result_count);
         set_status(g_main_window, status);
     }
 
@@ -894,6 +925,8 @@ static void on_search(void) {
     char scope[PATH_BUFFER_SIZE];
     GetWindowTextA(g_search_edit, term, sizeof(term));
     GetWindowTextA(g_scope_edit, scope, sizeof(scope));
+    trim_in_place(term);
+    trim_in_place(scope);
 
     if (term[0] == '\0') {
         set_status(g_main_window, "Type a search term first.");
@@ -904,35 +937,58 @@ static void on_search(void) {
 }
 
 static void resize_controls(HWND window, int width, int height) {
-    MoveWindow(g_available_list, 10, 30, 180, height - 180, TRUE);
-    MoveWindow(g_roots_list, 200, 30, 220, height - 180, TRUE);
-    MoveWindow(GetDlgItem(window, IDC_ADD_DRIVE), 10, height - 140, 180, 24, TRUE);
-    MoveWindow(GetDlgItem(window, IDC_ADD_FOLDER), 10, height - 110, 180, 24, TRUE);
-    MoveWindow(GetDlgItem(window, IDC_REMOVE_ROOT), 200, height - 140, 220, 24, TRUE);
-    MoveWindow(GetDlgItem(window, IDC_INDEX), 200, height - 110, 220, 24, TRUE);
-    MoveWindow(g_search_edit, 10, height - 75, width - 420, 24, TRUE);
-    MoveWindow(g_scope_edit, width - 400, height - 75, 280, 24, TRUE);
-    MoveWindow(GetDlgItem(window, IDC_SEARCH_BUTTON), width - 105, height - 75, 90, 24, TRUE);
-    MoveWindow(g_results_list, 10, height - 270, width - 20, 160, TRUE);
-    MoveWindow(g_status_label, 10, height - 40, width - 20, 20, TRUE);
+    int roots_x = 250;
+    int roots_width = width - roots_x - 25;
+    int search_top = 300;
+    int search_width = (width - 185) / 2;
+    int results_height = height - 445;
+
+    MoveWindow(GetDlgItem(window, IDC_TITLE), 15, 10, width - 30, 24, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_SUBTITLE), 15, 35, width - 30, 18, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_INDEX_GROUP), 10, 60, width - 20, 225, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_AVAILABLE_LABEL), 25, 82, 205, 18, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_ROOTS_LABEL), roots_x, 82, roots_width, 18, TRUE);
+    MoveWindow(g_available_list, 25, 102, 205, 125, TRUE);
+    MoveWindow(g_roots_list, roots_x, 102, roots_width, 125, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_ADD_DRIVE), 25, 237, 98, 28, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_ADD_FOLDER), 132, 237, 98, 28, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_REMOVE_ROOT), roots_x, 237, 125, 28, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_INDEX), roots_x + 135, 237, roots_width - 135, 28, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_SEARCH_GROUP), 10, search_top, width - 20, height - search_top - 45, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_SEARCH_LABEL), 25, search_top + 25, search_width, 18, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_SCOPE_LABEL), 35 + search_width, search_top + 25, search_width, 18, TRUE);
+    MoveWindow(g_search_edit, 25, search_top + 45, search_width, 25, TRUE);
+    MoveWindow(g_scope_edit, 35 + search_width, search_top + 45, search_width - 80, 25, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_SCOPE_BUTTON), 40 + (search_width * 2) - 80, search_top + 45, 75, 25, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_SEARCH_BUTTON), width - 125, search_top + 43, 100, 29, TRUE);
+    MoveWindow(GetDlgItem(window, IDC_RESULTS_LABEL), 25, search_top + 82, width - 50, 18, TRUE);
+    MoveWindow(g_results_list, 25, search_top + 102, width - 50, results_height > 80 ? results_height : 80, TRUE);
+    MoveWindow(g_status_label, 15, height - 32, width - 30, 20, TRUE);
+    SendMessageA(g_results_list, LB_SETHORIZONTALEXTENT, 1600, 0);
 }
 
 static void create_controls(HWND window) {
-    CreateWindowA("STATIC", "Available drives", WS_CHILD | WS_VISIBLE, 10, 8, 150, 18, window, NULL, g_instance, NULL);
-    CreateWindowA("STATIC", "Selected roots", WS_CHILD | WS_VISIBLE, 200, 8, 150, 18, window, NULL, g_instance, NULL);
-    g_available_list = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL, 10, 30, 180, 200, window, (HMENU)IDC_AVAILABLE, g_instance, NULL);
-    g_roots_list = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL, 200, 30, 220, 200, window, (HMENU)IDC_ROOTS, g_instance, NULL);
-    CreateWindowA("BUTTON", "Add Drive", WS_CHILD | WS_VISIBLE, 10, 240, 180, 24, window, (HMENU)IDC_ADD_DRIVE, g_instance, NULL);
-    CreateWindowA("BUTTON", "Add Folder", WS_CHILD | WS_VISIBLE, 10, 270, 180, 24, window, (HMENU)IDC_ADD_FOLDER, g_instance, NULL);
-    CreateWindowA("BUTTON", "Remove Root", WS_CHILD | WS_VISIBLE, 200, 240, 220, 24, window, (HMENU)IDC_REMOVE_ROOT, g_instance, NULL);
-    CreateWindowA("BUTTON", "Index Selected", WS_CHILD | WS_VISIBLE, 200, 270, 220, 24, window, (HMENU)IDC_INDEX, g_instance, NULL);
-    CreateWindowA("STATIC", "Search", WS_CHILD | WS_VISIBLE, 10, 430, 80, 18, window, NULL, g_instance, NULL);
-    CreateWindowA("STATIC", "Scope (optional)", WS_CHILD | WS_VISIBLE, 420, 430, 140, 18, window, NULL, g_instance, NULL);
-    g_search_edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", NULL, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 10, 450, 400, 24, window, (HMENU)IDC_SEARCH_EDIT, g_instance, NULL);
-    g_scope_edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", NULL, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 420, 450, 280, 24, window, (HMENU)IDC_SCOPE_EDIT, g_instance, NULL);
-    CreateWindowA("BUTTON", "Search", WS_CHILD | WS_VISIBLE, 710, 450, 90, 24, window, (HMENU)IDC_SEARCH_BUTTON, g_instance, NULL);
-    g_results_list = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL, 10, 300, 790, 120, window, (HMENU)IDC_RESULTS, g_instance, NULL);
-    g_status_label = CreateWindowA("STATIC", "Ready.", WS_CHILD | WS_VISIBLE, 10, 560, 790, 20, window, (HMENU)IDC_STATUS, g_instance, NULL);
+    CreateWindowA("STATIC", "Find any file in seconds", WS_CHILD | WS_VISIBLE, 15, 10, 790, 24, window, (HMENU)IDC_TITLE, g_instance, NULL);
+    CreateWindowA("STATIC", "First choose what to index. After indexing, type part of a filename and double-click a result to open it.", WS_CHILD | WS_VISIBLE, 15, 35, 790, 18, window, (HMENU)IDC_SUBTITLE, g_instance, NULL);
+    CreateWindowA("BUTTON", "1. Choose locations and build the index", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 10, 60, 800, 225, window, (HMENU)IDC_INDEX_GROUP, g_instance, NULL);
+    CreateWindowA("STATIC", "Available drives", WS_CHILD | WS_VISIBLE, 25, 82, 205, 18, window, (HMENU)IDC_AVAILABLE_LABEL, g_instance, NULL);
+    CreateWindowA("STATIC", "Locations that will be searchable", WS_CHILD | WS_VISIBLE, 250, 82, 535, 18, window, (HMENU)IDC_ROOTS_LABEL, g_instance, NULL);
+    g_available_list = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL, 25, 102, 205, 125, window, (HMENU)IDC_AVAILABLE, g_instance, NULL);
+    g_roots_list = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, 250, 102, 535, 125, window, (HMENU)IDC_ROOTS, g_instance, NULL);
+    CreateWindowA("BUTTON", "Add drive >", WS_CHILD | WS_VISIBLE, 25, 237, 98, 28, window, (HMENU)IDC_ADD_DRIVE, g_instance, NULL);
+    CreateWindowA("BUTTON", "Add folder...", WS_CHILD | WS_VISIBLE, 132, 237, 98, 28, window, (HMENU)IDC_ADD_FOLDER, g_instance, NULL);
+    CreateWindowA("BUTTON", "Remove selected", WS_CHILD | WS_VISIBLE, 250, 237, 125, 28, window, (HMENU)IDC_REMOVE_ROOT, g_instance, NULL);
+    CreateWindowA("BUTTON", "2. Build / refresh index", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 385, 237, 400, 28, window, (HMENU)IDC_INDEX, g_instance, NULL);
+    CreateWindowA("BUTTON", "3. Search the index", WS_CHILD | WS_VISIBLE | BS_GROUPBOX, 10, 300, 800, 290, window, (HMENU)IDC_SEARCH_GROUP, g_instance, NULL);
+    CreateWindowA("STATIC", "Filename or extension (examples: report, invoice.pdf, .jpg)", WS_CHILD | WS_VISIBLE, 25, 325, 300, 18, window, (HMENU)IDC_SEARCH_LABEL, g_instance, NULL);
+    CreateWindowA("STATIC", "Limit to a folder (optional)", WS_CHILD | WS_VISIBLE, 335, 325, 300, 18, window, (HMENU)IDC_SCOPE_LABEL, g_instance, NULL);
+    g_search_edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", NULL, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 25, 345, 300, 25, window, (HMENU)IDC_SEARCH_EDIT, g_instance, NULL);
+    g_scope_edit = CreateWindowExA(WS_EX_CLIENTEDGE, "EDIT", NULL, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 335, 345, 215, 25, window, (HMENU)IDC_SCOPE_EDIT, g_instance, NULL);
+    CreateWindowA("BUTTON", "Browse...", WS_CHILD | WS_VISIBLE, 555, 345, 75, 25, window, (HMENU)IDC_SCOPE_BUTTON, g_instance, NULL);
+    CreateWindowA("BUTTON", "Search", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, 685, 343, 100, 29, window, (HMENU)IDC_SEARCH_BUTTON, g_instance, NULL);
+    CreateWindowA("STATIC", "Best matches appear first. Double-click a result to open it.", WS_CHILD | WS_VISIBLE, 25, 382, 760, 18, window, (HMENU)IDC_RESULTS_LABEL, g_instance, NULL);
+    g_results_list = CreateWindowExA(WS_EX_CLIENTEDGE, "LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL | WS_HSCROLL, 25, 402, 760, 145, window, (HMENU)IDC_RESULTS, g_instance, NULL);
+    g_status_label = CreateWindowA("STATIC", "Ready.", WS_CHILD | WS_VISIBLE, 15, 600, 790, 20, window, (HMENU)IDC_STATUS, g_instance, NULL);
 }
 
 static LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM w_param, LPARAM l_param) {
@@ -974,6 +1030,9 @@ static LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM w_param,
         case IDC_SEARCH_BUTTON:
             on_search();
             return 0;
+        case IDC_SCOPE_BUTTON:
+            apply_scope_from_selection();
+            return 0;
         case IDC_RESULTS:
             if (HIWORD(w_param) == LBN_DBLCLK) {
                 int selection = (int)SendMessageA(g_results_list, LB_GETCURSEL, 0, 0);
@@ -989,6 +1048,10 @@ static LRESULT CALLBACK main_wnd_proc(HWND window, UINT message, WPARAM w_param,
             show_main_window();
             focus_search();
         }
+        return 0;
+    case WM_GETMINMAXINFO:
+        ((MINMAXINFO *)l_param)->ptMinTrackSize.x = 760;
+        ((MINMAXINFO *)l_param)->ptMinTrackSize.y = 620;
         return 0;
     case WM_TRAYICON:
         if (l_param == WM_LBUTTONDBLCLK) {
